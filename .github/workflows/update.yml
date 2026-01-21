@@ -2,20 +2,22 @@ name: Deprem Analiz Otomasyonu
 
 on:
   schedule:
-    - cron: '*/30 * * * *'  # 30 dakikada bir çalış
-  workflow_dispatch:        
+    - cron: '*/30 * * * *'
+  workflow_dispatch:
+
+permissions:
+  contents: write  # Bu satır çok önemli
 
 jobs:
   run-analysis:
     runs-on: ubuntu-latest
-    permissions:
-      contents: write  
 
     steps:
     - name: Depoyu Çek (Checkout)
       uses: actions/checkout@v3
       with:
-        fetch-depth: 0 
+        persist-credentials: false # Token çakışmasını önlemek için false yapıyoruz
+        fetch-depth: 0
 
     - name: Python Kurulumu
       uses: actions/setup-python@v4
@@ -28,11 +30,20 @@ jobs:
     - name: Analizi Çalıştır
       run: python analiz.py
 
-    - name: Sonuçları Kaydet ve Gönder
+    - name: Sonuçları Kaydet ve Zorla Gönder
       run: |
         git config --global user.name 'github-actions[bot]'
         git config --global user.email 'github-actions[bot]@users.noreply.github.com'
         git add b_analiz_grafik.png index.html
-        # Eğer değişiklik yoksa hata verme, varsa gönder:
-        git commit -m "Otomatik Güncelleme: $(date)" || echo "Değişiklik yok, commit atlanıyor."
-        git push
+        
+        # Değişiklik var mı kontrol et
+        if [[ -n $(git status -s) ]]; then
+          echo "Değişiklikler bulundu, kaydediliyor..."
+          git commit -m "Otomatik Analiz: $(date)"
+          
+          # BURASI SİHİRLİ KISIM: Token'ı linkin içine gömüyoruz
+          git remote set-url origin https://x-access-token:${{ secrets.GITHUB_TOKEN }}@github.com/${{ github.repository }}
+          git push
+        else
+          echo "Değişiklik yok, işlem tamam."
+        fi
