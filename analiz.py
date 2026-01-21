@@ -18,8 +18,8 @@ MAX_MAG = 7.0
 # TARİH FİLTRESİNİ "GENİŞ" TUTUYORUZ
 # Böylece "Hangi yıldayız?" karmaşası yaşanmaz.
 # 2024'ten başlayıp 2030'a kadar her şeyi istiyoruz.
-FORCE_START_DATE = "2025-08-10T00:00:01"
-FORCE_END_DATE   = "2026-01-22T01:30:00"
+FORCE_START_DATE = "2025-08-10T00:00:00"
+FORCE_END_DATE = datetime.utcnow().isoformat()
 
 # Analize girecek son deprem sayısı (En güncel 1000 depremi alır)
 MAX_EVENTS_TO_ANALYZE = 1000 
