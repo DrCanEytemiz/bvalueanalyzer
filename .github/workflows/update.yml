@@ -6,7 +6,7 @@ on:
   workflow_dispatch:
 
 permissions:
-  contents: write  # Bu satır çok önemli
+  contents: write
 
 jobs:
   run-analysis:
@@ -16,7 +16,7 @@ jobs:
     - name: Depoyu Çek (Checkout)
       uses: actions/checkout@v3
       with:
-        persist-credentials: false # Token çakışmasını önlemek için false yapıyoruz
+        persist-credentials: false
         fetch-depth: 0
 
     - name: Python Kurulumu
@@ -30,16 +30,20 @@ jobs:
     - name: Analizi Çalıştır
       run: python analiz.py
 
-   - name: Sonuçları Kaydet
+    - name: Sonuçları Kaydet ve Gönder
       run: |
         git config --global user.name 'github-actions[bot]'
         git config --global user.email 'github-actions[bot]@users.noreply.github.com'
         
-        # BURASI ÇOK ÖNEMLİ: Tüm dosyaları (CSV dahil) ekle
+        # Arsiv dosyasi ve resimler dahil her seyi ekle
         git add .
         
+        # Degisiklik varsa gonder
         if [[ -n $(git status -s) ]]; then
-          git commit -m "Veri Güncellemesi: $(date)"
+          echo "Veri bulundu, kaydediliyor..."
+          git commit -m "Otomatik Analiz Guncellemesi"
           git remote set-url origin https://x-access-token:${{ secrets.GITHUB_TOKEN }}@github.com/${{ github.repository }}
           git push
+        else
+          echo "Yeni veri yok."
         fi
