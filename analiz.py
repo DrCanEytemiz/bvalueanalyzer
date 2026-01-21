@@ -3,7 +3,7 @@ import numpy as np
 import matplotlib.pyplot as plt
 import matplotlib.dates as mdates
 import requests
-from datetime import datetime, timedelta
+from datetime import datetime
 
 # --- AYARLAR ---
 # Koordinatlar (Manisa/Balıkesir)
@@ -12,47 +12,47 @@ MAX_LAT = 39.4073
 MIN_LON = 27.7682
 MAX_LON = 28.5698
 
-# --- YENİ FİLTRELER ---
-MIN_MAG = 1.0  # İsteğiniz üzerine en az 1.0
-MAX_MAG = 7.0  # İsteğiniz üzerine en çok 7.0
+MIN_MAG = 1.0
+MAX_MAG = 7.0
 
-# Veri boş kalmasın diye süreyi 30 güne çıkardık (1.0 altını elediğimiz için veri azalır)
-DAYS_BACK = 30 
-WINDOW_SIZE = 30 # En az 30 deprem lazım
-STEP_SIZE = 2
+# TARİH FİLTRESİNİ "GENİŞ" TUTUYORUZ
+# Böylece "Hangi yıldayız?" karmaşası yaşanmaz.
+# 2024'ten başlayıp 2030'a kadar her şeyi istiyoruz.
+FORCE_START_DATE = "2025-08-10T00:00:01"
+FORCE_END_DATE   = "2026-01-22T01:30:00"
+
+# Analize girecek son deprem sayısı (En güncel 1000 depremi alır)
+MAX_EVENTS_TO_ANALYZE = 1000 
+WINDOW_SIZE = 50 
+STEP_SIZE = 5
 
 def save_empty_plot(message):
-    """Veri yetersizse uyarı resmi kaydeder"""
     fig, ax = plt.subplots(figsize=(10, 6))
     ax.text(0.5, 0.5, message, ha='center', va='center', fontsize=12, color='red')
-    ax.set_title("Analiz Durumu")
+    ax.set_title("Sistem Mesajı")
     ax.axis('off')
     plt.savefig('b_analiz_grafik.png')
     
     html = f"<html><body><h2>{message}</h2><p>Guncelleme: {datetime.now()}</p></body></html>"
     with open("index.html", "w") as f: f.write(html)
 
-def fetch_recent_data():
+def fetch_brute_force_data():
     url = "https://deprem.afad.gov.tr/apiserver/getEventSearchList"
     
-    # Şu anki zamandan geriye doğru git
-    end_date = datetime.now()
-    start_date = end_date - timedelta(days=DAYS_BACK)
-    
-    print(f"Veri aralığı taranıyor: {start_date} -> {end_date}")
+    print(f"Veri isteniyor: {FORCE_START_DATE} -> {FORCE_END_DATE}")
     
     headers = {"Content-Type": "application/json"}
     payload = {
-        "Start": start_date.strftime("%Y-%m-%dT%H:%M:%S"),
-        "End": end_date.strftime("%Y-%m-%dT%H:%M:%S"),
+        "Start": FORCE_START_DATE,
+        "End": FORCE_END_DATE,
         "MinLat": MIN_LAT, "MaxLat": MAX_LAT,
         "MinLon": MIN_LON, "MaxLon": MAX_LON,
-        "MinMag": MIN_MAG, "MaxMag": MAX_MAG, # BURASI GÜNCELLENDİ
+        "MinMag": MIN_MAG, "MaxMag": MAX_MAG,
         "FilterType": "Location"
     }
     
     try:
-        response = requests.post(url, headers=headers, json=payload, timeout=30)
+        response = requests.post(url, headers=headers, json=payload, timeout=45)
         if response.status_code == 200:
             data = response.json()
             events = data if isinstance(data, list) else data.get('result', [])
@@ -63,7 +63,10 @@ def fetch_recent_data():
             df.rename(columns={'eventDate': 'Date', 'magnitude': 'Mag', 'latitude': 'Lat', 'longitude': 'Lon'}, inplace=True)
             df['Date'] = pd.to_datetime(df['Date'])
             df['Mag'] = pd.to_numeric(df['Mag'])
-            return df.sort_values(by='Date').reset_index(drop=True)
+            
+            # Tarihe göre sırala
+            df = df.sort_values(by='Date').reset_index(drop=True)
+            return df
             
     except Exception as e:
         print(f"Hata: {e}")
@@ -71,7 +74,6 @@ def fetch_recent_data():
     return pd.DataFrame()
 
 def calculate_mc(magnitudes):
-    # Max Curvature
     mag_rounded = np.round(magnitudes, 1)
     bins = np.arange(min(mag_rounded), max(mag_rounded) + 0.2, 0.1)
     counts, edges = np.histogram(mag_rounded, bins=bins)
@@ -79,28 +81,34 @@ def calculate_mc(magnitudes):
 
 def analyze_and_plot(df):
     if df.empty:
-        save_empty_plot(f"Son {DAYS_BACK} gunde, {MIN_MAG}-{MAX_MAG} buyuklugunde deprem yok.")
+        save_empty_plot(f"API {FORCE_START_DATE} tarihinden beri hic veri dondurmedi.\nKoordinat veya API sorunu olabilir.")
         return
 
-    if len(df) < WINDOW_SIZE:
-        save_empty_plot(f"Son {DAYS_BACK} gunde {len(df)} deprem bulundu.\nAnaliz icin en az {WINDOW_SIZE} gerekli.")
-        return
+    print(f"API'den toplam {len(df)} deprem geldi.")
+
+    # Sadece EN SON X depremi al (Grafik çok sıkışmasın diye)
+    if len(df) > MAX_EVENTS_TO_ANALYZE:
+        df = df.tail(MAX_EVENTS_TO_ANALYZE).reset_index(drop=True)
+        print(f"Analiz icin son {MAX_EVENTS_TO_ANALYZE} deprem kullaniliyor.")
 
     # Mc Hesabı
     mc = calculate_mc(df['Mag'])
-    
-    # Mc Filtresi (Eğer otomatik Mc, bizim 1.0 sınırından küçük çıkarsa 1.0'ı baz al)
-    mc = max(mc, MIN_MAG)
+    mc = max(mc, MIN_MAG) # En az 1.0 olsun
     
     df_clean = df[df['Mag'] >= mc].reset_index(drop=True)
     
     if len(df_clean) < WINDOW_SIZE:
-        save_empty_plot(f"Mc ({mc}) sonrasi veri yetersiz ({len(df_clean)} adet).")
+        save_empty_plot(f"Mc ({mc}) sonrasi veri yetersiz ({len(df_clean)}).")
         return
 
     mags = df_clean['Mag'].values
     times = df_clean['Date'].values
     
+    # İstatistikler
+    first_date = times[0]
+    last_date = times[-1]
+    
+    # Mainshock
     main_idx = np.argmax(mags)
     main_mag = mags[main_idx]
     main_date = times[main_idx]
@@ -122,23 +130,28 @@ def analyze_and_plot(df):
         plot_times.append(pd.to_datetime(np.mean(times[start:end].astype(np.int64))))
     
     # GRAFİK
-    fig, (ax1, ax2) = plt.subplots(2, 1, figsize=(12, 10), sharex=True)
+    fig, (ax1, ax2) = plt.subplots(2, 1, figsize=(14, 10), sharex=True)
     
-    ax1.plot(plot_times, b_values, 'k.-', label='b-value')
+    # Zaman ekseni formatı
+    date_format = mdates.DateFormatter('%Y-%m-%d')
+    
+    ax1.plot(plot_times, b_values, 'k.-', label='b-value', linewidth=1)
     ax1.fill_between(plot_times, np.array(b_values)-np.array(b_errors), 
                      np.array(b_values)+np.array(b_errors), color='gray', alpha=0.3)
     ax1.axvline(x=main_date, color='r', linestyle='--', label=f'Max (M{main_mag})')
     
     ax1.set_ylabel('b-value')
-    ax1.set_title(f'SON {DAYS_BACK} GUNLUK ANALIZ (Filtre: M{MIN_MAG}-{MAX_MAG})\nBolge: {MIN_LAT}-{MAX_LAT} / {MIN_LON}-{MAX_LON}', fontweight='bold')
+    # Title'a tarih aralığını otomatik yazdırıyoruz
+    title_str = f"Sismik Analiz (Son {len(df)} Deprem)\nTarih Aralığı: {str(pd.to_datetime(first_date).date())} - {str(pd.to_datetime(last_date).date())}"
+    ax1.set_title(title_str, fontweight='bold')
     ax1.grid(True, linestyle='--')
     ax1.legend()
     
-    ax2.scatter(df_clean['Date'], df_clean['Mag'], s=25, alpha=0.6, edgecolors='none')
+    ax2.scatter(df_clean['Date'], df_clean['Mag'], s=15, alpha=0.6, edgecolors='none')
     ax2.axvline(x=main_date, color='r', linestyle='--')
     ax2.set_ylabel('Buyukluk (M)')
     ax2.set_xlabel('Tarih')
-    ax2.xaxis.set_major_formatter(mdates.DateFormatter('%d-%m %H:%M'))
+    ax2.xaxis.set_major_formatter(date_format)
     plt.xticks(rotation=45)
     
     plt.tight_layout()
@@ -152,10 +165,10 @@ def analyze_and_plot(df):
     <style>body{{font-family:sans-serif;text-align:center;padding:20px;}} img{{max-width:100%;box-shadow:0 0 10px #ccc;}}</style>
     </head>
     <body>
-        <h2>Deprem Analizi (Son {DAYS_BACK} Gün)</h2>
-        <p><strong>Filtre:</strong> M {MIN_MAG} - {MAX_MAG}</p>
-        <p><strong>Analize Giren Deprem Sayısı:</strong> {len(df_clean)}</p>
-        <p><small>Son Güncelleme: {datetime.now().strftime("%d-%m-%Y %H:%M")}</small></p>
+        <h2>Bölgesel Sismik Analiz</h2>
+        <p><strong>Veri Kaynağı:</strong> {str(pd.to_datetime(first_date).date())} ile {str(pd.to_datetime(last_date).date())} arası</p>
+        <p><strong>Analiz Edilen Deprem:</strong> {len(df_clean)} adet (Filtre: M{MIN_MAG}-{MAX_MAG})</p>
+        <p><small>Rapor Oluşturma: {datetime.now().strftime("%Y-%m-%d %H:%M")}</small></p>
         <img src="b_analiz_grafik.png">
     </body>
     </html>
@@ -163,5 +176,5 @@ def analyze_and_plot(df):
     with open("index.html", "w", encoding="utf-8") as f: f.write(html_content)
 
 if __name__ == "__main__":
-    df = fetch_recent_data()
+    df = fetch_brute_force_data()
     analyze_and_plot(df)
