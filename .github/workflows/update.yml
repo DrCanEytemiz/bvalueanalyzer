@@ -1,0 +1,35 @@
+name: Deprem Analiz Otomasyonu
+
+on:
+  schedule:
+    - cron: '*/30 * * * *' 
+  workflow_dispatch:
+
+jobs:
+  run-analysis:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+
+    steps:
+    - name: Depoyu Çek
+      uses: actions/checkout@v3
+
+    - name: Python Kur
+      uses: actions/setup-python@v4
+      with:
+        python-version: '3.9'
+
+    - name: Kütüphaneleri Yükle
+      run: pip install -r requirements.txt
+
+    - name: Analizi Çalıştır
+      run: python analiz.py
+
+    - name: Sonuçları Kaydet ve Yayınla
+      run: |
+        git config --global user.name 'github-actions[bot]'
+        git config --global user.email 'github-actions[bot]@users.noreply.github.com'
+        git add b_analiz_grafik.png index.html
+        git commit -m "Otomatik Analiz: $(date)" || echo "Değişiklik yok"
+        git push
