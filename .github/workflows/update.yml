@@ -2,20 +2,22 @@ name: Deprem Analiz Otomasyonu
 
 on:
   schedule:
-    - cron: '*/30 * * * *' 
-  workflow_dispatch:
+    - cron: '*/30 * * * *'  # 30 dakikada bir çalış
+  workflow_dispatch:        
 
 jobs:
   run-analysis:
     runs-on: ubuntu-latest
     permissions:
-      contents: write
+      contents: write  
 
     steps:
-    - name: Depoyu Çek
+    - name: Depoyu Çek (Checkout)
       uses: actions/checkout@v3
+      with:
+        fetch-depth: 0 
 
-    - name: Python Kur
+    - name: Python Kurulumu
       uses: actions/setup-python@v4
       with:
         python-version: '3.9'
@@ -26,10 +28,11 @@ jobs:
     - name: Analizi Çalıştır
       run: python analiz.py
 
-    - name: Sonuçları Kaydet ve Yayınla
+    - name: Sonuçları Kaydet ve Gönder
       run: |
         git config --global user.name 'github-actions[bot]'
         git config --global user.email 'github-actions[bot]@users.noreply.github.com'
         git add b_analiz_grafik.png index.html
-        git commit -m "Otomatik Analiz: $(date)" || echo "Değişiklik yok"
+        # Eğer değişiklik yoksa hata verme, varsa gönder:
+        git commit -m "Otomatik Güncelleme: $(date)" || echo "Değişiklik yok, commit atlanıyor."
         git push
