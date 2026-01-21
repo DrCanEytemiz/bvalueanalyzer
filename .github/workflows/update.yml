@@ -30,20 +30,16 @@ jobs:
     - name: Analizi Çalıştır
       run: python analiz.py
 
-    - name: Sonuçları Kaydet ve Zorla Gönder
+   - name: Sonuçları Kaydet
       run: |
         git config --global user.name 'github-actions[bot]'
         git config --global user.email 'github-actions[bot]@users.noreply.github.com'
-        git add b_analiz_grafik.png index.html
         
-        # Değişiklik var mı kontrol et
+        # BURASI ÇOK ÖNEMLİ: Tüm dosyaları (CSV dahil) ekle
+        git add .
+        
         if [[ -n $(git status -s) ]]; then
-          echo "Değişiklikler bulundu, kaydediliyor..."
-          git commit -m "Otomatik Analiz: $(date)"
-          
-          # BURASI SİHİRLİ KISIM: Token'ı linkin içine gömüyoruz
+          git commit -m "Veri Güncellemesi: $(date)"
           git remote set-url origin https://x-access-token:${{ secrets.GITHUB_TOKEN }}@github.com/${{ github.repository }}
           git push
-        else
-          echo "Değişiklik yok, işlem tamam."
         fi
