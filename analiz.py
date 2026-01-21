@@ -6,21 +6,25 @@ import requests
 from datetime import datetime, timedelta
 
 # --- AYARLAR ---
-# Koordinatlar (Manisa/Balıkesir Kutusu)
+# Koordinatlar (Manisa/Balıkesir)
 MIN_LAT = 38.9382
 MAX_LAT = 39.4073
 MIN_LON = 27.7682
 MAX_LON = 28.5698
 
-# Analiz Parametreleri
-# 1 haftalık veri az olacağı için pencereyi küçülttük, yoksa grafik çizmez.
-WINDOW_SIZE = 30  
-STEP_SIZE = 2     
+# --- YENİ FİLTRELER ---
+MIN_MAG = 1.0  # İsteğiniz üzerine en az 1.0
+MAX_MAG = 7.0  # İsteğiniz üzerine en çok 7.0
+
+# Veri boş kalmasın diye süreyi 30 güne çıkardık (1.0 altını elediğimiz için veri azalır)
+DAYS_BACK = 30 
+WINDOW_SIZE = 30 # En az 30 deprem lazım
+STEP_SIZE = 2
 
 def save_empty_plot(message):
     """Veri yetersizse uyarı resmi kaydeder"""
     fig, ax = plt.subplots(figsize=(10, 6))
-    ax.text(0.5, 0.5, message, ha='center', va='center', fontsize=14, color='red')
+    ax.text(0.5, 0.5, message, ha='center', va='center', fontsize=12, color='red')
     ax.set_title("Analiz Durumu")
     ax.axis('off')
     plt.savefig('b_analiz_grafik.png')
@@ -28,14 +32,14 @@ def save_empty_plot(message):
     html = f"<html><body><h2>{message}</h2><p>Guncelleme: {datetime.now()}</p></body></html>"
     with open("index.html", "w") as f: f.write(html)
 
-def fetch_last_week_data():
+def fetch_recent_data():
     url = "https://deprem.afad.gov.tr/apiserver/getEventSearchList"
     
-    # DINAMIK TARIH: Şu andan 7 gün geriye git
+    # Şu anki zamandan geriye doğru git
     end_date = datetime.now()
-    start_date = end_date - timedelta(days=7)
+    start_date = end_date - timedelta(days=DAYS_BACK)
     
-    print(f"Veri aralığı: {start_date} -> {end_date}")
+    print(f"Veri aralığı taranıyor: {start_date} -> {end_date}")
     
     headers = {"Content-Type": "application/json"}
     payload = {
@@ -43,7 +47,8 @@ def fetch_last_week_data():
         "End": end_date.strftime("%Y-%m-%dT%H:%M:%S"),
         "MinLat": MIN_LAT, "MaxLat": MAX_LAT,
         "MinLon": MIN_LON, "MaxLon": MAX_LON,
-        "MinMag": 0.0, "MaxMag": 9.9, "FilterType": "Location"
+        "MinMag": MIN_MAG, "MaxMag": MAX_MAG, # BURASI GÜNCELLENDİ
+        "FilterType": "Location"
     }
     
     try:
@@ -66,6 +71,7 @@ def fetch_last_week_data():
     return pd.DataFrame()
 
 def calculate_mc(magnitudes):
+    # Max Curvature
     mag_rounded = np.round(magnitudes, 1)
     bins = np.arange(min(mag_rounded), max(mag_rounded) + 0.2, 0.1)
     counts, edges = np.histogram(mag_rounded, bins=bins)
@@ -73,32 +79,32 @@ def calculate_mc(magnitudes):
 
 def analyze_and_plot(df):
     if df.empty:
-        save_empty_plot("Son 1 haftada bu bolgede hic deprem yok.")
+        save_empty_plot(f"Son {DAYS_BACK} gunde, {MIN_MAG}-{MAX_MAG} buyuklugunde deprem yok.")
         return
 
     if len(df) < WINDOW_SIZE:
-        save_empty_plot(f"Son 1 haftada {len(df)} deprem var.\nAnaliz icin en az {WINDOW_SIZE} gerekli.")
+        save_empty_plot(f"Son {DAYS_BACK} gunde {len(df)} deprem bulundu.\nAnaliz icin en az {WINDOW_SIZE} gerekli.")
         return
 
     # Mc Hesabı
     mc = calculate_mc(df['Mag'])
     
-    # Filtreleme
+    # Mc Filtresi (Eğer otomatik Mc, bizim 1.0 sınırından küçük çıkarsa 1.0'ı baz al)
+    mc = max(mc, MIN_MAG)
+    
     df_clean = df[df['Mag'] >= mc].reset_index(drop=True)
     
     if len(df_clean) < WINDOW_SIZE:
-        save_empty_plot(f"Mc ({mc}) sonrasi veri yetersiz ({len(df_clean)}).")
+        save_empty_plot(f"Mc ({mc}) sonrasi veri yetersiz ({len(df_clean)} adet).")
         return
 
     mags = df_clean['Mag'].values
     times = df_clean['Date'].values
     
-    # Mainshock
     main_idx = np.argmax(mags)
     main_mag = mags[main_idx]
     main_date = times[main_idx]
 
-    # b-value
     b_values, b_errors, plot_times = [], [], []
     num_windows = (len(mags) - WINDOW_SIZE) // STEP_SIZE + 1
     
@@ -121,14 +127,14 @@ def analyze_and_plot(df):
     ax1.plot(plot_times, b_values, 'k.-', label='b-value')
     ax1.fill_between(plot_times, np.array(b_values)-np.array(b_errors), 
                      np.array(b_values)+np.array(b_errors), color='gray', alpha=0.3)
-    ax1.axvline(x=main_date, color='r', linestyle='--', label=f'En Buyuk (M{main_mag})')
+    ax1.axvline(x=main_date, color='r', linestyle='--', label=f'Max (M{main_mag})')
     
     ax1.set_ylabel('b-value')
-    ax1.set_title(f'SON 7 GUNLUK ANALIZ (Mc={mc:.1f})\nBolge: {MIN_LAT}-{MAX_LAT} / {MIN_LON}-{MAX_LON}', fontweight='bold')
+    ax1.set_title(f'SON {DAYS_BACK} GUNLUK ANALIZ (Filtre: M{MIN_MAG}-{MAX_MAG})\nBolge: {MIN_LAT}-{MAX_LAT} / {MIN_LON}-{MAX_LON}', fontweight='bold')
     ax1.grid(True, linestyle='--')
     ax1.legend()
     
-    ax2.scatter(df_clean['Date'], df_clean['Mag'], s=20, alpha=0.6)
+    ax2.scatter(df_clean['Date'], df_clean['Mag'], s=25, alpha=0.6, edgecolors='none')
     ax2.axvline(x=main_date, color='r', linestyle='--')
     ax2.set_ylabel('Buyukluk (M)')
     ax2.set_xlabel('Tarih')
@@ -138,18 +144,18 @@ def analyze_and_plot(df):
     plt.tight_layout()
     plt.savefig('b_analiz_grafik.png', dpi=150)
     
-    # HTML
     html_content = f"""
     <!DOCTYPE html>
     <html lang="tr">
     <head><meta charset="UTF-8"><meta http-equiv="refresh" content="600">
-    <title>Haftalık Analiz</title>
+    <title>Canlı Analiz</title>
     <style>body{{font-family:sans-serif;text-align:center;padding:20px;}} img{{max-width:100%;box-shadow:0 0 10px #ccc;}}</style>
     </head>
     <body>
-        <h2>Son 7 Günün Deprem Analizi</h2>
-        <p><strong>Deprem Sayısı:</strong> {len(df)} | <strong>Mc Üstü:</strong> {len(df_clean)}</p>
-        <p>Güncelleme: {datetime.now().strftime("%d-%m-%Y %H:%M")}</p>
+        <h2>Deprem Analizi (Son {DAYS_BACK} Gün)</h2>
+        <p><strong>Filtre:</strong> M {MIN_MAG} - {MAX_MAG}</p>
+        <p><strong>Analize Giren Deprem Sayısı:</strong> {len(df_clean)}</p>
+        <p><small>Son Güncelleme: {datetime.now().strftime("%d-%m-%Y %H:%M")}</small></p>
         <img src="b_analiz_grafik.png">
     </body>
     </html>
@@ -157,5 +163,5 @@ def analyze_and_plot(df):
     with open("index.html", "w", encoding="utf-8") as f: f.write(html_content)
 
 if __name__ == "__main__":
-    df = fetch_last_week_data()
+    df = fetch_recent_data()
     analyze_and_plot(df)
